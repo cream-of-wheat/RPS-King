@@ -1,6 +1,7 @@
 from math import e
 from enum import Enum
 import random
+import pygame
 
 
 class Predictor:
@@ -147,6 +148,39 @@ class Outcome(Enum):
     BOT_WIN = 2
 
 
+class Button:
+    def __init__(self, x, y, width, height, normal_color=(64, 64, 64), hover_color = (84, 84, 84)):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.normal_color = normal_color
+        self.hover_color = hover_color
+
+        self.hover = False
+
+    def draw(self, surface):
+        if self.hover:
+            color = self.hover_color
+        else:
+            color = self.normal_color
+
+        pygame.draw.rect(surface, color, self.rect)
+
+    def check_hover(self, mouse_pos):
+        self.hover = self.rect.collidepoint(mouse_pos)
+        return self.hover
+
+    def clicked(self, mouse_pos, event):
+        if self.rect.collidepoint(mouse_pos):
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                return True
+
+        return False
+
+
+class GameState(Enum):
+    CHOICE_SCREEN = 1
+    OUTCOME_SCREEN = 2
+
+
 class Game:
     def __init__(self):
         self.manager = Manager()
@@ -155,10 +189,51 @@ class Game:
         self.draws = 0
         self.human_wins = 0
 
-        self.convert_answer = {'r': 0, 'p': 1, 's': 2}
+        self.convert_answer = {'rock': 0, 'paper': 1, 'scissors': 2}
         self.convert_to_array = {0: [1, 0, 0], 1: [0, 1, 0], 2: [0, 0, 1]}
 
+        self.game_state = GameState.CHOICE_SCREEN
+        self.player_choice = None
+        self.prediction = None
+        self.result = None
+
+        pygame.init()
+        self.screen = pygame.display.set_mode((960, 540))
+        pygame.display.set_caption("Rock, Paper, Scissors")
+        self.clock = pygame.time.Clock()
+
+        self.animation_phase = 0
+        self.len_animation = 2
+        self.animation_time = 0.3
+        self.animation_time_left = self.animation_time
+
+        self.buttons = {
+            "rock": Button(40, 340, 160, 160),
+            "paper": Button(240, 340, 160, 160),
+            "scissors": Button(440, 340, 160, 160)
+        }
+
+        self.images = {
+            "rock": [pygame.image.load("assets/rock.png").convert_alpha(), pygame.image.load("assets/rock-attack.png").convert_alpha()],
+            "paper": [pygame.image.load("assets/paper.png").convert_alpha(), pygame.image.load("assets/paper-attack.png").convert_alpha()],
+            "scissors": [pygame.image.load("assets/scissors.png").convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()]
+        }
+
+        self.running = True
+
     def run(self):
+        while self.running:
+            time_delta = self.clock.tick(60) / 1000.0
+            self.update_animation(time_delta)
+
+            self.handle_events()
+
+            if self.game_state == GameState.OUTCOME_SCREEN:
+                self.draw_outcome()
+            else:
+                self.draw_choice()
+
+        """
         while True:
             try:
                 player_choice_input = input("Rock, Paper, or Scissors\n").lower()
@@ -174,6 +249,62 @@ class Game:
                     print("input r, p or s")
             except KeyboardInterrupt:
                 break
+        """
+
+    def handle_events(self):
+        mouse_pos = pygame.mouse.get_pos()
+        for button in self.buttons: self.buttons.get(button).check_hover(mouse_pos)
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+
+            if event.type == pygame.MOUSEBUTTONUP and self.game_state == GameState.CHOICE_SCREEN:
+                if self.buttons.get("rock").clicked(mouse_pos, event):
+                    self.player_choice = "rock"
+                if self.buttons.get("paper").clicked(mouse_pos, event):
+                    self.player_choice = "paper"
+                if self.buttons.get("scissors").clicked(mouse_pos, event):
+                    self.player_choice = "scissors"
+
+                if self.player_choice:
+                    self.game_state = GameState.OUTCOME_SCREEN
+                    self.prediction = self.manager.predict()
+                    player_choice = self.convert_answer.get(self.player_choice)
+                    self.result = Game.get_result(player_choice, self.prediction)
+                    self.update_stats(self.result)
+                    self.update_manager(player_choice, self.prediction)
+
+            if event.type == pygame.KEYDOWN and self.game_state == GameState.OUTCOME_SCREEN:
+                self.player_choice = None
+                self.prediction = None
+                self.result = None
+                self.game_state = GameState.CHOICE_SCREEN
+
+    def draw_choice(self):
+        self.screen.fill((0, 0, 0))
+        pygame.draw.rect(self.screen, (250, 128, 114), (0, 0, 960, 540))
+
+        for button in self.buttons: self.buttons.get(button).draw(self.screen)
+
+        self.screen.blit(self.images.get("rock")[self.animation_phase], (43, 343))
+        self.screen.blit(self.images.get("paper")[self.animation_phase], (243, 343))
+        self.screen.blit(self.images.get("scissors")[self.animation_phase], (443, 343))
+
+        pygame.display.flip()
+
+    def draw_outcome(self):
+        self.screen.fill((0, 0, 0))
+        pygame.draw.rect(self.screen, (250, 128, 114), (0, 0, 960, 540))
+
+        pygame.draw.rect(self.screen, (64, 64, 64), (40 + 200 * self.convert_answer.get(self.player_choice), 340, 160, 160))
+        self.screen.blit(self.images.get(self.player_choice)[0], (43 + 200 * self.convert_answer.get(self.player_choice), 343))
+
+        pygame.draw.rect(self.screen, (64, 64, 64), (720, 340, 160, 160))
+        self.screen.blit(self.images.get(list(self.images)[(self.prediction + 1) % 3])[0], (723, 343))
+
+
+        pygame.display.flip()
 
     @staticmethod
     def get_result(plyr_choice, bot_choice):
@@ -204,6 +335,13 @@ class Game:
 
         self.manager.add_new_round(plyr_choice_arr + bot_choice_arr)
         self.manager.learn(plyr_choice_arr)
+
+    def update_animation(self, time):
+        self.animation_time_left -= time
+
+        if self.animation_time_left <= 0:
+            self.animation_time_left += self.animation_time
+            self.animation_phase = (self.animation_phase + 1) % self.len_animation
 
 
 if __name__ == "__main__":
