@@ -1,22 +1,24 @@
 from math import e
 from enum import Enum
 import random
+import math
 import pygame
 
 
 class Predictor:
-    def __init__(self, num_games, learning_rate = 0.01, num_hidden_layers=1):
+    def __init__(self, num_games, learning_rate = 0.1, num_hidden_layers=1, momentum=0.85):
         self.learning_rate = learning_rate
         self.num_games = num_games
+        self.momentum = momentum
         self.layers = []
 
         for i in range(num_hidden_layers):
             if not i:
-                self.layers.append(Layer(32, num_games * 6))
+                self.layers.append(Layer(24, num_games * 6))
             else:
-                self.layers.append(Layer(32, 12))
+                self.layers.append(Layer(24, 24))
 
-        self.layers.append(Layer(3, 32, last_layer=True))
+        self.layers.append(Layer(3, 24, last_layer=True))
 
         self.prediction = None
 
@@ -43,7 +45,7 @@ class Predictor:
             delta = layer.backward(delta)
 
         for layer in self.layers:
-            layer.update(self.learning_rate)
+            layer.update(self.learning_rate, self.momentum)
 
 
     @staticmethod
@@ -94,14 +96,18 @@ class Layer:
 
         return next_layer_deltas
 
-    def update(self, learning_rate):
+    def update(self, learning_rate, momentum=0.85):
         for neuron in self.neurons:
-            neuron.update(self.inputs, learning_rate)
+            neuron.update(self.inputs, learning_rate, momentum)
 
 class Neuron:
     def __init__(self, num_inputs):
-        self.weights = [random.uniform(-0.2, 0.2) for _ in range(num_inputs)]
-        self.bias = 0.1
+        std_dev = math.sqrt(2.0 / num_inputs)
+        self.weights = [random.gauss(0.0, std_dev) for _ in range(num_inputs)]
+        self.bias = 0.01
+
+        self.velocity = [0.0 for _ in range(num_inputs)]
+        self.velocity_bias = 0.0
 
         self.raw_output = 0.0
         self.output = 0.0
@@ -115,19 +121,24 @@ class Neuron:
 
         return self.raw_output
 
-    def update(self, inputs, learning_rate):
+    def update(self, inputs, learning_rate, momentum = 0.85):
         for i in range(len(self.weights)):
             gradient = inputs[i] * self.delta
-            self.weights[i] -= learning_rate * gradient
+            # self.weights[i] -= learning_rate * gradient
+            self.velocity[i] = (momentum * self.velocity[i]) - (learning_rate * gradient)
+            self.weights[i] += self.velocity[i]
 
+        self.velocity_bias = (momentum * self.velocity_bias) - (learning_rate * self.delta)
         self.bias -= self.delta * learning_rate
 
 
 class Manager:
-    def __init__(self):
-        self.num_games = 8
-        self.games = [[0, 0, 0, 0, 0, 0] for _ in range(self.num_games)]
-        self.predictor = Predictor(self.num_games)
+    def __init__(self, num_games = 8, learning_rate_bot = 0.1, momentum=0.85):
+        self.num_games = num_games
+        self.learning_rate_bot = learning_rate_bot
+        self.momentum = momentum
+        self.games = [random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) + random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) for _ in range(self.num_games)]
+        self.predictor = Predictor(self.num_games, learning_rate=self.learning_rate_bot, momentum=self.momentum)
 
     def add_new_round(self, choice):
         del self.games[0]
@@ -135,6 +146,15 @@ class Manager:
 
     def predict(self):
         predictions = self.predictor.forward(self.games)
+        print(predictions)
+
+        """
+        Greedy threshold strategy: 
+        if max(predictions) > 0.45 or random.random() < 0.80:
+            return predictions.index(max(predictions))
+        else:
+            return random.choices([0, 1, 2])[0]
+        """
 
         return random.choices([0, 1, 2], weights=predictions, k=1)[0]
 
@@ -216,7 +236,8 @@ class Game:
         self.images = {
             "rock": [pygame.image.load("assets/rock.png").convert_alpha(), pygame.image.load("assets/rock-attack.png").convert_alpha()],
             "paper": [pygame.image.load("assets/paper.png").convert_alpha(), pygame.image.load("assets/paper-attack.png").convert_alpha()],
-            "scissors": [pygame.image.load("assets/scissors.png").convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()]
+            "scissors": [pygame.image.load("assets/scissors.png").convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()],
+            "computer": pygame.transform.scale_by(pygame.image.load("assets/computer.png").convert_alpha(), 2)
         }
 
         self.running = True
@@ -232,24 +253,6 @@ class Game:
                 self.draw_outcome()
             else:
                 self.draw_choice()
-
-        """
-        while True:
-            try:
-                player_choice_input = input("Rock, Paper, or Scissors\n").lower()
-
-                if player_choice_input == "r" or player_choice_input == "p" or player_choice_input == "s":
-                    prediction = self.manager.predict()
-                    player_choice = self.convert_answer.get(player_choice_input)
-                    result = Game.get_result(player_choice, prediction)
-                    self.update_stats(result)
-                    self.update_manager(player_choice, prediction)
-
-                else:
-                    print("input r, p or s")
-            except KeyboardInterrupt:
-                break
-        """
 
     def handle_events(self):
         mouse_pos = pygame.mouse.get_pos()
@@ -291,6 +294,8 @@ class Game:
         self.screen.blit(self.images.get("paper")[self.animation_phase], (243, 343))
         self.screen.blit(self.images.get("scissors")[self.animation_phase], (443, 343))
 
+        self.screen.blit(self.images.get("computer"), (720, 120))
+
         pygame.display.flip()
 
     def draw_outcome(self):
@@ -301,19 +306,19 @@ class Game:
         self.screen.blit(self.images.get(self.player_choice)[0], (43 + 200 * self.convert_answer.get(self.player_choice), 343))
 
         pygame.draw.rect(self.screen, (64, 64, 64), (720, 340, 160, 160))
-        self.screen.blit(self.images.get(list(self.images)[(self.prediction + 1) % 3])[0], (723, 343))
-
+        self.screen.blit(self.images.get(list(self.images)[self.prediction])[0], (723, 343))
+        self.screen.blit(self.images.get("computer"), (720, 120))
 
         pygame.display.flip()
 
     @staticmethod
     def get_result(plyr_choice, bot_choice):
         if plyr_choice == bot_choice:
-            return Outcome.BOT_WIN
-        elif (plyr_choice + 1) % 3 == bot_choice:
-            return Outcome.PLAYER_WIN
-        else:
             return Outcome.DRAW
+        elif (plyr_choice + 1) % 3 == bot_choice:
+            return Outcome.BOT_WIN
+        else:
+            return Outcome.PLAYER_WIN
 
     def update_stats(self, result):
         if result == Outcome.PLAYER_WIN:
@@ -331,10 +336,11 @@ class Game:
 
     def update_manager(self, plyr_choice, bot_choice):
         plyr_choice_arr = self.convert_to_array.get(plyr_choice)
+        target_choice = self.convert_to_array.get((plyr_choice + 1) % 3)
         bot_choice_arr = self.convert_to_array.get(bot_choice)
 
         self.manager.add_new_round(plyr_choice_arr + bot_choice_arr)
-        self.manager.learn(plyr_choice_arr)
+        self.manager.learn(target_choice)
 
     def update_animation(self, time):
         self.animation_time_left -= time
