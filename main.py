@@ -129,7 +129,8 @@ class Neuron:
             self.weights[i] += self.velocity[i]
 
         self.velocity_bias = (momentum * self.velocity_bias) - (learning_rate * self.delta)
-        self.bias -= self.delta * learning_rate
+        self.bias += self.velocity_bias
+        # self.bias -= self.delta * learning_rate
 
 
 class Manager:
