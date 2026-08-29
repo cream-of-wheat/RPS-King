@@ -1,8 +1,8 @@
-from math import e
 from enum import Enum
 import random
 import math
 import pygame
+import threading
 
 
 class Predictor:
@@ -47,12 +47,11 @@ class Predictor:
         for layer in self.layers:
             layer.update(self.learning_rate, self.momentum)
 
-
     @staticmethod
     def softmax(vector):
         max_vector = max(vector)
         stab_vector = [vector_comp - max_vector for vector_comp in vector]
-        exp_vector = [e**stab_comp for stab_comp in stab_vector]
+        exp_vector = [math.exp(stab_comp) for stab_comp in stab_vector]
         exp_sum = sum(exp_vector)
 
         return [exp_comp/exp_sum for exp_comp in exp_vector]
@@ -61,7 +60,7 @@ class Predictor:
 class Layer:
     def __init__(self, num_neurons, num_inputs, last_layer=False): # last layer is different from the rest. All others need the ReLu
         self.last_layer = last_layer
-        self.neurons = [Neuron(num_inputs) for _ in range(num_neurons)]
+        self.neurons = [Neuron(num_inputs, self.last_layer) for _ in range(num_neurons)]
         self.inputs = []
 
     def forward(self, inputs):
@@ -101,8 +100,12 @@ class Layer:
             neuron.update(self.inputs, learning_rate, momentum)
 
 class Neuron:
-    def __init__(self, num_inputs):
-        std_dev = math.sqrt(2.0 / num_inputs)
+    def __init__(self, num_inputs, last_layer=False):
+        if last_layer:
+            std_dev = math.sqrt(1.0 / num_inputs)
+        else:
+            std_dev = math.sqrt(2.0 / num_inputs)
+
         self.weights = [random.gauss(0.0, std_dev) for _ in range(num_inputs)]
         self.bias = 0.01
 
@@ -134,33 +137,33 @@ class Neuron:
 
 
 class Manager:
-    def __init__(self, num_games = 8, learning_rate_bot = 0.1, momentum=0.85):
+    def __init__(self, num_games = 6, learning_rate_bot = 0.06, momentum=0.40):
         self.num_games = num_games
         self.learning_rate_bot = learning_rate_bot
         self.momentum = momentum
-        self.games = [random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) + random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) for _ in range(self.num_games)]
+        # self.games = [random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) + random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) for _ in range(self.num_games)]
+        self.games = [[0, 0, 0, 0, 0, 0] for _ in range(self.num_games)]
         self.predictor = Predictor(self.num_games, learning_rate=self.learning_rate_bot, momentum=self.momentum)
+        self.predictions = []
 
     def add_new_round(self, choice):
         del self.games[0]
         self.games.append(choice)
 
     def predict(self):
-        predictions = self.predictor.forward(self.games)
-        print(predictions)
+        self.predictions = self.predictor.forward(self.games)
 
-        """
-        Greedy threshold strategy: 
-        if max(predictions) > 0.45 or random.random() < 0.80:
-            return predictions.index(max(predictions))
+
+        # Greedy threshold strategy:
+        if max(self.predictions) > 0.45 or random.random() < 0.80:
+            return self.predictions.index(max(self.predictions))
         else:
             return random.choices([0, 1, 2])[0]
-        """
 
-        return random.choices([0, 1, 2], weights=predictions, k=1)[0]
+        # return random.choices([0, 1, 2], weights=self.predictions, k=1)[0]
 
-    def learn(self, player_choice):
-        self.predictor.backward(player_choice)
+    def learn(self, target_choice):
+        self.predictor.backward(target_choice)
 
 
 class Outcome(Enum):
@@ -216,10 +219,14 @@ class Game:
         self.game_state = GameState.CHOICE_SCREEN
         self.player_choice = None
         self.prediction = None
+        self.next_prediction = self.manager.predict()
+        self.is_thinking = False
+        self.predictions = self.manager.predictions
         self.result = None
 
         pygame.init()
         self.screen = pygame.display.set_mode((960, 540))
+        self.font = pygame.font.Font("assets/PressStart2P.ttf", 24)
         pygame.display.set_caption("Rock, Paper, Scissors")
         self.clock = pygame.time.Clock()
 
@@ -240,6 +247,17 @@ class Game:
             "scissors": [pygame.image.load("assets/scissors.png").convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()],
             "computer": pygame.transform.scale_by(pygame.image.load("assets/computer.png").convert_alpha(), 2)
         }
+
+        self.scanlines = pygame.Surface((960, 540), pygame.SRCALPHA)
+        for y in range(0, 540, 3):
+            pygame.draw.line(self.scanlines, (0, 0, 0,  60), (0, y), (960, y), 1)
+
+        self.taunts = {
+            Outcome.BOT_WIN: ["PREDICTABLE", "TOO EASY", "IS THAT ALL YA GOT?"],
+            Outcome.PLAYER_WIN: ["LUCKY GUESS", "IMPOSSIBLE", "BEGINNER'S LUCK"],
+            Outcome.DRAW: ["STALEMATE", "I'M GOING EASY", "LOGIC TIE"]
+        }
+        self.current_taunt = ""
 
         self.running = True
 
@@ -273,21 +291,33 @@ class Game:
 
                 if self.player_choice:
                     self.game_state = GameState.OUTCOME_SCREEN
-                    self.prediction = self.manager.predict()
+                    self.prediction = self.next_prediction
+                    self.predictions = self.manager.predictions
                     player_choice = self.convert_answer.get(self.player_choice)
                     self.result = Game.get_result(player_choice, self.prediction)
                     self.update_stats(self.result)
-                    self.update_manager(player_choice, self.prediction)
+
+                    self.is_thinking = True
+                    threading.Thread(
+                        target=self.update_and_predict,
+                        args=(player_choice, self.prediction),
+                        daemon=True
+                    ).start()
 
             if event.type == pygame.KEYDOWN and self.game_state == GameState.OUTCOME_SCREEN:
                 self.player_choice = None
                 self.prediction = None
                 self.result = None
+                self.current_taunt = ""
                 self.game_state = GameState.CHOICE_SCREEN
 
+    def update_and_predict(self, plyr_choice, bot_choice):
+        self.update_manager(plyr_choice, bot_choice)
+        self.next_prediction = self.manager.predict()
+        self.is_thinking = False
+
     def draw_choice(self):
-        self.screen.fill((0, 0, 0))
-        pygame.draw.rect(self.screen, (250, 128, 114), (0, 0, 960, 540))
+        self.screen.fill((25, 25, 85))
 
         for button in self.buttons: self.buttons.get(button).draw(self.screen)
 
@@ -295,22 +325,96 @@ class Game:
         self.screen.blit(self.images.get("paper")[self.animation_phase], (243, 343))
         self.screen.blit(self.images.get("scissors")[self.animation_phase], (443, 343))
 
-        self.screen.blit(self.images.get("computer"), (720, 120))
+        self.screen.blit(self.images.get("computer"), (720, 180))
+        self.draw_stats()
 
+        self.screen.blit(self.scanlines, (0, 0))
         pygame.display.flip()
 
     def draw_outcome(self):
-        self.screen.fill((0, 0, 0))
-        pygame.draw.rect(self.screen, (250, 128, 114), (0, 0, 960, 540))
+        self.screen.fill((25, 25, 85))
 
         pygame.draw.rect(self.screen, (64, 64, 64), (40 + 200 * self.convert_answer.get(self.player_choice), 340, 160, 160))
         self.screen.blit(self.images.get(self.player_choice)[0], (43 + 200 * self.convert_answer.get(self.player_choice), 343))
 
         pygame.draw.rect(self.screen, (64, 64, 64), (720, 340, 160, 160))
         self.screen.blit(self.images.get(list(self.images)[self.prediction])[0], (723, 343))
-        self.screen.blit(self.images.get("computer"), (720, 120))
+        self.screen.blit(self.images.get("computer"), (720, 180))
+        self.draw_prob_bars(self.predictions)
+        self.draw_stats()
 
+        if pygame.time.get_ticks() % 1000 < 500:
+            text = self.font.render("PRESS ANY KEY TO PLAY AGAIN", True, (255, 255, 0))
+            self.screen.blit(text, (40, 280))
+
+        if self.current_taunt:
+            taunt_text = self.font.render(self.current_taunt, True, (0, 0, 0))
+            text_rect = taunt_text.get_rect(midright=(640, 200))
+
+            pygame.draw.rect(self.screen, (255, 255, 255), text_rect.inflate(40, 20))
+            pygame.draw.rect(self.screen, (0, 255, 255), text_rect.inflate(40, 20), 4)
+
+            pygame.draw.polygon(self.screen, (255, 255, 255), [(700, 200), (680, 190), (680, 210)])
+            pygame.draw.lines(self.screen, (0, 255, 255), False, [(680, 190), (700, 200), (680, 210)], 4)
+
+            self.screen.blit(taunt_text, text_rect)
+
+        self.screen.blit(self.scanlines, (0, 0))
         pygame.display.flip()
+
+    def draw_prob_bars(self, predictions):
+        labels = ["Rock", "Paper", "Scissors"]
+
+        x = 520
+        y = 55
+        bar_width = 150
+        bar_height = 18
+        spacing = 28
+
+        for i, probability in enumerate(predictions):
+            label = labels[i]
+            percent = probability * 100
+
+            text = self.font.render(f"{label}", True, (255, 255, 255))
+            text_rect = text.get_rect(topright=(x+130, y + i * spacing))
+            self.screen.blit(text, text_rect)
+
+            bar_x = x + 150
+            bar_y = y + i *spacing
+
+            pygame.draw.rect(self.screen, (220, 220, 220), (bar_x, bar_y, int(bar_width * probability), bar_height))
+
+            percent_text = self.font.render(f"{percent:.1f}%", True, (0, 255, 255))
+            self.screen.blit(percent_text, (bar_x + bar_width + 15, bar_y - 2))
+
+    def draw_stats(self):
+        total_games = self.bot_wins + self.draws + self.human_wins
+
+        if total_games == 0:
+            bot_percent = 0
+            draw_percent = 0
+            human_percent = 0
+        else:
+            bot_percent = self.bot_wins / total_games * 100
+            draw_percent = self.draws / total_games * 100
+            human_percent = self.human_wins / total_games * 100
+
+        stats = [
+            f"Bot win%:{bot_percent:.1f}%",
+            f"Draw%:{draw_percent:.1f}%",
+            f"Human win%:{human_percent:.1f}%"
+        ]
+
+        x = 40
+        y = 40
+        spacing = 30
+
+        for i, stat in enumerate(stats):
+            text = self.font.render(stat, True, (255, 255, 255))
+            self.screen.blit(text, (x, y + i * spacing))
+
+        text = self.font.render(f"Total games: {total_games}", True, (255, 255, 255))
+        self.screen.blit(text, (40, 130))
 
     @staticmethod
     def get_result(plyr_choice, bot_choice):
@@ -332,8 +436,10 @@ class Game:
             self.draws += 1
             print("tie")
 
-        total_games = self.bot_wins + self.draws + self.human_wins
-        print(f"Bot win%: {self.bot_wins / total_games * 100}%; draw%: {self.draws / total_games * 100}%; Human win%: {self.human_wins / total_games * 100}%; Total games: {total_games}")
+        self.current_taunt = random.choice(self.taunts[result])
+
+        # total_games = self.bot_wins + self.draws + self.human_wins
+        # print(f"Bot win%: {self.bot_wins / total_games * 100}%; draw%: {self.draws / total_games * 100}%; Human win%: {self.human_wins / total_games * 100}%; Total games: {total_games}")
 
     def update_manager(self, plyr_choice, bot_choice):
         plyr_choice_arr = self.convert_to_array.get(plyr_choice)
