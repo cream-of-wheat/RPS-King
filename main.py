@@ -6,15 +6,15 @@ import threading
 
 
 class Predictor:
-    def __init__(self, num_games, learning_rate = 0.1, num_hidden_layers=1, momentum=0.85):
+    def __init__(self, input_size, learning_rate = 0.1, num_hidden_layers=1, momentum=0.85):
         self.learning_rate = learning_rate
-        self.num_games = num_games
+        self.num_games = input_size
         self.momentum = momentum
         self.layers = []
 
         for i in range(num_hidden_layers):
             if not i:
-                self.layers.append(Layer(24, num_games * 6))
+                self.layers.append(Layer(24, input_size))
             else:
                 self.layers.append(Layer(24, 24))
 
@@ -25,11 +25,7 @@ class Predictor:
     def forward(self, inputs):
         self.prediction = None
 
-        new_inputs = []
-
-        for game_input in inputs:
-            for i in range(6):
-                new_inputs.append(game_input[i])
+        new_inputs = inputs
 
         for layer in self.layers:
             new_inputs = layer.forward(new_inputs)
@@ -39,6 +35,9 @@ class Predictor:
         return self.prediction
 
     def backward(self, target):
+        target_index = target.index(1.0)
+        loss = -math.log(max(self.prediction[target_index], 1e-15))
+
         delta = [self.prediction[i] - target[i] for i in range(3)]
 
         for layer in reversed(self.layers):
@@ -46,6 +45,8 @@ class Predictor:
 
         for layer in self.layers:
             layer.update(self.learning_rate, self.momentum)
+
+        return loss
 
     @staticmethod
     def softmax(vector):
@@ -137,33 +138,80 @@ class Neuron:
 
 
 class Manager:
-    def __init__(self, num_games = 6, learning_rate_bot = 0.06, momentum=0.40):
+    def __init__(self, num_games = 3, learning_rate_bot = 0.02, momentum=0.1):
         self.num_games = num_games
         self.learning_rate_bot = learning_rate_bot
         self.momentum = momentum
+        self.raw_history = []
+        self.player_counts = [0, 0, 0]
+        self.input_size = 9 + (self.num_games * 6)
         # self.games = [random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) + random.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) for _ in range(self.num_games)]
-        self.games = [[0, 0, 0, 0, 0, 0] for _ in range(self.num_games)]
-        self.predictor = Predictor(self.num_games, learning_rate=self.learning_rate_bot, momentum=self.momentum)
+        # self.games = [[0, 0, 0, 0, 0, 0] for _ in range(self.num_games)]
+        self.predictor = Predictor(self.input_size, learning_rate=self.learning_rate_bot, momentum=self.momentum)
         self.predictions = []
 
-    def add_new_round(self, choice):
-        del self.games[0]
-        self.games.append(choice)
+    def build_feature_vector(self):
+        if not self.raw_history:
+            return [0.0] * self.input_size
+
+        last_p, last_b, last_outcome = self.raw_history[-1]
+        outcome_feat = [1.0 if last_outcome == i else 0.0 for i in range(3)]
+
+        if len(self.raw_history) >= 2:
+            prev_p = self.raw_history[-2][0]
+            shift = (last_p - prev_p) % 3
+            trans_feat = [1.0 if shift == i else 0.0 for i in range(3)]
+        else:
+            trans_feat = [0.0, 0.0, 0.0]
+
+        total = max(1, sum(self.player_counts))
+        freq_feat = [c / total for c in self.player_counts]
+
+        recent_feat = []
+        for i in range(1, self.num_games + 1):
+            if len(self.raw_history) >= i:
+                p, b, _ = self.raw_history[-i]
+                p_arr = [1.0 if p == j else 0.0 for j in range(3)]
+                b_arr = [1.0 if b == j else 0.0 for j in range(3)]
+                recent_feat.extend(p_arr + b_arr)
+            else:
+                recent_feat.extend([0.0] * 6)
+
+        return outcome_feat + trans_feat + freq_feat + recent_feat
+
+    def add_new_round(self, plyr_choice, bot_choice, outcome_val):
+        self.raw_history.append((plyr_choice, bot_choice, outcome_val))
+        self.player_counts[plyr_choice] += 1
+
+        if len(self.raw_history) > max(self.num_games, 2):
+            self.raw_history.pop(0)
 
     def predict(self):
-        self.predictions = self.predictor.forward(self.games)
+        self.predictions = self.predictor.forward(self.build_feature_vector())
 
+        pred_plyr_move = self.predictions.index(max(self.predictions))
+        counter_move = (pred_plyr_move + 1) % 3
 
-        # Greedy threshold strategy:
+        """
+        Greedy threshold strategy:
         if max(self.predictions) > 0.45 or random.random() < 0.80:
-            return self.predictions.index(max(self.predictions))
+            return counter_move
+        else:
+            return random.choices([0, 1, 2])[0]
+            
+        Weighted choices strategy    
+        return random.choices([0, 1, 2], weights=self.predictions, k=1)[0]    
+        """
+
+        # epsilon greedy strategy
+        if random.random() < 0.90:
+            return counter_move
         else:
             return random.choices([0, 1, 2])[0]
 
-        # return random.choices([0, 1, 2], weights=self.predictions, k=1)[0]
-
-    def learn(self, target_choice):
-        self.predictor.backward(target_choice)
+    def learn(self, target_choice_int):
+        target_arr = [1.0 if target_choice_int == i else 0.0 for i in range(3)]
+        return self.predictor.backward(target_arr)
 
 
 class Outcome(Enum):
@@ -214,7 +262,6 @@ class Game:
         self.human_wins = 0
 
         self.convert_answer = {'rock': 0, 'paper': 1, 'scissors': 2}
-        self.convert_to_array = {0: [1, 0, 0], 1: [0, 1, 0], 2: [0, 0, 1]}
 
         self.game_state = GameState.CHOICE_SCREEN
         self.player_choice = None
@@ -300,7 +347,7 @@ class Game:
                     self.is_thinking = True
                     threading.Thread(
                         target=self.update_and_predict,
-                        args=(player_choice, self.prediction),
+                        args=(player_choice, self.prediction, self.result),
                         daemon=True
                     ).start()
 
@@ -311,8 +358,8 @@ class Game:
                 self.current_taunt = ""
                 self.game_state = GameState.CHOICE_SCREEN
 
-    def update_and_predict(self, plyr_choice, bot_choice):
-        self.update_manager(plyr_choice, bot_choice)
+    def update_and_predict(self, plyr_choice, bot_choice, result):
+        self.update_manager(plyr_choice, bot_choice, result)
         self.next_prediction = self.manager.predict()
         self.is_thinking = False
 
@@ -365,26 +412,31 @@ class Game:
     def draw_prob_bars(self, predictions):
         labels = ["Rock", "Paper", "Scissors"]
 
-        x = 520
-        y = 55
+        text = self.font.render(f"HUMAN PREDICTION", True, (255, 50, 50))
+        self.screen.blit(text, (540, 40))
+
+        x = 500
+        y = 75
         bar_width = 150
         bar_height = 18
-        spacing = 28
+        spacing = 30
 
         for i, probability in enumerate(predictions):
             label = labels[i]
             percent = probability * 100
-
-            text = self.font.render(f"{label}", True, (255, 255, 255))
+            text_color = (255, 50, 50) if probability == max(predictions) else (255, 255, 255)
+            text = self.font.render(f"{label}", True, text_color)
             text_rect = text.get_rect(topright=(x+130, y + i * spacing))
             self.screen.blit(text, text_rect)
 
             bar_x = x + 150
             bar_y = y + i *spacing
 
-            pygame.draw.rect(self.screen, (220, 220, 220), (bar_x, bar_y, int(bar_width * probability), bar_height))
+            color = (255, 50, 50) if probability == max(predictions) else (220, 220, 220)
 
-            percent_text = self.font.render(f"{percent:.1f}%", True, (0, 255, 255))
+            pygame.draw.rect(self.screen, color, (bar_x, bar_y, int(bar_width * probability), bar_height))
+
+            percent_text = self.font.render(f"{percent:.1f}%", True, text_color)
             self.screen.blit(percent_text, (bar_x + bar_width + 15, bar_y - 2))
 
     def draw_stats(self):
@@ -406,7 +458,7 @@ class Game:
         ]
 
         x = 40
-        y = 40
+        y = 44
         spacing = 30
 
         for i, stat in enumerate(stats):
@@ -414,7 +466,7 @@ class Game:
             self.screen.blit(text, (x, y + i * spacing))
 
         text = self.font.render(f"Total games: {total_games}", True, (255, 255, 255))
-        self.screen.blit(text, (40, 130))
+        self.screen.blit(text, (38, 134))
 
     @staticmethod
     def get_result(plyr_choice, bot_choice):
@@ -428,26 +480,20 @@ class Game:
     def update_stats(self, result):
         if result == Outcome.PLAYER_WIN:
             self.human_wins += 1
-            print("you won")
         elif result == Outcome.BOT_WIN:
             self.bot_wins += 1
-            print("computer won")
         else:
             self.draws += 1
-            print("tie")
 
         self.current_taunt = random.choice(self.taunts[result])
 
         # total_games = self.bot_wins + self.draws + self.human_wins
         # print(f"Bot win%: {self.bot_wins / total_games * 100}%; draw%: {self.draws / total_games * 100}%; Human win%: {self.human_wins / total_games * 100}%; Total games: {total_games}")
 
-    def update_manager(self, plyr_choice, bot_choice):
-        plyr_choice_arr = self.convert_to_array.get(plyr_choice)
-        target_choice = self.convert_to_array.get((plyr_choice + 1) % 3)
-        bot_choice_arr = self.convert_to_array.get(bot_choice)
-
-        self.manager.add_new_round(plyr_choice_arr + bot_choice_arr)
-        self.manager.learn(target_choice)
+    def update_manager(self, plyr_choice, bot_choice, result):
+        self.manager.add_new_round(plyr_choice, bot_choice, result.value)
+        loss = self.manager.learn(plyr_choice)
+        print(f"Loss: {loss}")
 
     def update_animation(self, time):
         self.animation_time_left -= time
