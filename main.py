@@ -291,9 +291,9 @@ class Game:
         }
 
         self.images = {
-            "rock": [pygame.image.load(Game.resource_path("assets/rock.png")).convert_alpha(), pygame.image.load("assets/rock-attack.png").convert_alpha()],
-            "paper": [pygame.image.load(Game.resource_path("assets/paper.png")).convert_alpha(), pygame.image.load("assets/paper-attack.png").convert_alpha()],
-            "scissors": [pygame.image.load(Game.resource_path("assets/scissors.png")).convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()],
+            "rock": [pygame.image.load(Game.resource_path("assets/rock.png")).convert_alpha(), pygame.image.load(Game.resource_path("assets/rock-attack.png")).convert_alpha()],
+            "paper": [pygame.image.load(Game.resource_path("assets/paper.png")).convert_alpha(), pygame.image.load(Game.resource_path("assets/paper-attack.png")).convert_alpha()],
+            "scissors": [pygame.image.load(Game.resource_path("assets/scissors.png")).convert_alpha(), pygame.image.load(Game.resource_path("assets/scissors-attack.png")).convert_alpha()],
             "computer": pygame.transform.scale_by(pygame.image.load(Game.resource_path("assets/computer.png")).convert_alpha(), 2)
         }
 
