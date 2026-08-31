@@ -1,4 +1,6 @@
 from enum import Enum
+import os
+import sys
 import random
 import math
 import pygame
@@ -273,7 +275,7 @@ class Game:
 
         pygame.init()
         self.screen = pygame.display.set_mode((960, 540))
-        self.font = pygame.font.Font("assets/PressStart2P.ttf", 24)
+        self.font = pygame.font.Font(Game.resource_path("assets/PressStart2P.ttf"), 24)
         pygame.display.set_caption("Rock, Paper, Scissors")
         self.clock = pygame.time.Clock()
 
@@ -289,10 +291,10 @@ class Game:
         }
 
         self.images = {
-            "rock": [pygame.image.load("assets/rock.png").convert_alpha(), pygame.image.load("assets/rock-attack.png").convert_alpha()],
-            "paper": [pygame.image.load("assets/paper.png").convert_alpha(), pygame.image.load("assets/paper-attack.png").convert_alpha()],
-            "scissors": [pygame.image.load("assets/scissors.png").convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()],
-            "computer": pygame.transform.scale_by(pygame.image.load("assets/computer.png").convert_alpha(), 2)
+            "rock": [pygame.image.load(Game.resource_path("assets/rock.png")).convert_alpha(), pygame.image.load("assets/rock-attack.png").convert_alpha()],
+            "paper": [pygame.image.load(Game.resource_path("assets/paper.png")).convert_alpha(), pygame.image.load("assets/paper-attack.png").convert_alpha()],
+            "scissors": [pygame.image.load(Game.resource_path("assets/scissors.png")).convert_alpha(), pygame.image.load("assets/scissors-attack.png").convert_alpha()],
+            "computer": pygame.transform.scale_by(pygame.image.load(Game.resource_path("assets/computer.png")).convert_alpha(), 2)
         }
 
         self.scanlines = pygame.Surface((960, 540), pygame.SRCALPHA)
@@ -307,6 +309,14 @@ class Game:
         self.current_taunt = ""
 
         self.running = True
+
+    @staticmethod
+    def resource_path(relative_path):
+        try:
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
+        return os.path.join(base_path, relative_path)
 
     def run(self):
         while self.running:
