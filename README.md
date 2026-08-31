@@ -27,7 +27,7 @@ To keep you on your toes, the bot employs and epsilon-greedy strategy. This mean
 1. Clone the repository:
   ```bash
   git clone https://github.com/cream-of-wheat/RPS-King.git
-  cd RPS_King
+  cd RPS-King
   ```
 2. Install the required dependencies:
   ```bash
