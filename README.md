@@ -20,7 +20,8 @@ To keep you on your toes, the bot employs and epsilon-greedy strategy. This mean
 - Background threading for predictions and learning updates to ensure the visual interface never lags while you play
 - Taunts from the AI
 
-<img width="957" height="574" alt="image" src="https://github.com/user-attachments/assets/7d683a3f-00a0-4820-a767-ef3610245dd2" />
+<img width="958" height="567" alt="image" src="https://github.com/user-attachments/assets/c9952593-8c14-4d92-818c-ad30debc41ad" />
+
 
 ## Installation
 
