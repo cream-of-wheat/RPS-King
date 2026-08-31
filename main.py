@@ -138,7 +138,7 @@ class Neuron:
 
 
 class Manager:
-    def __init__(self, num_games = 3, learning_rate_bot = 0.02, momentum=0.1):
+    def __init__(self, num_games = 2, learning_rate_bot = 0.2, momentum=0.1):
         self.num_games = num_games
         self.learning_rate_bot = learning_rate_bot
         self.momentum = momentum
